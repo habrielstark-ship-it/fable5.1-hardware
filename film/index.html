@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>OONE — Соревнования и награды · Сообщество и общение</title>
+<style>
+@font-face{font-family:Inter;src:url(assets/Inter.ttf);font-weight:100 900}
+@font-face{font-family:Caveat;src:url(assets/Caveat.ttf);font-weight:400 700}
+@font-face{font-family:'Caveat Brush';src:url(assets/CaveatBrush.ttf)}
+html,body{margin:0;background:#000}
+#stage{position:relative;width:1080px;height:1920px;overflow:hidden;background:#151515;color:#fff;font-family:Inter,sans-serif;font-optical-sizing:auto;-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
+#stage *{box-sizing:border-box}
+#stage div,#stage svg.abs{position:absolute;left:0;top:0}
+#stage .ln{position:relative;left:auto;top:auto;white-space:nowrap}
+#stage .rel{position:relative;left:auto;top:auto}
+.tx{width:960px;text-align:center;transform-origin:50% 0}
+.tx.h{font-weight:600;font-size:78px;line-height:82px;letter-spacing:-.035em}
+.tx.t{font-weight:600;font-size:104px;line-height:110px;letter-spacing:-.045em}
+.tx.s{font-weight:450;font-size:40px;line-height:52px;letter-spacing:-.012em;color:rgba(255,255,255,.7)}
+.tx.e{font-family:Caveat;font-weight:700;font-size:48px;line-height:52px;color:#A5E800;transform:rotate(-2deg)}
+.acc{color:#A5E800}
+.u{position:relative;display:inline-block;white-space:nowrap}
+.u svg{position:absolute;left:-8px;top:100%;margin-top:-.2em;overflow:visible}
+.u svg path{fill:none;stroke:#A5E800;stroke-width:4.5;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1}
+.cv{font-family:'Caveat Brush',Caveat;font-weight:700}
+.card{background:#1E1E1E;border:1.5px solid rgba(255,255,255,.07)}
+.pill{background:#1E1E1E;border:1.5px solid rgba(255,255,255,.08);border-radius:999px;display:flex;align-items:center;justify-content:center;gap:16px;font-weight:600;white-space:nowrap}
+.cen{display:flex;align-items:center;justify-content:center;white-space:nowrap}
+.avimg{inset:0;width:100%;height:100%;background-repeat:no-repeat;background-position:50% 0;background-size:cover}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<svg width="0" height="0" style="position:absolute"><defs>
+  <radialGradient id="cg" cx=".34" cy=".28" r=".85"><stop offset="0" stop-color="#FFEDB0"/><stop offset=".45" stop-color="#FFC21A"/><stop offset="1" stop-color="#BF7A00"/></radialGradient>
+  <clipPath id="gc"><rect x="4" y="4" width="192" height="122" rx="20"/></clipPath>
+</defs></svg>
+<script src="timeline.js"></script>
+<script>
+'use strict';
+const { S, K } = TL;
+const stage = document.getElementById('stage');
+const LIME = '#A5E800', LOGO = '#CAFD3A', PURPLE = '#8E3FD8', GOLD = '#FFC21A', CARD = '#1E1E1E';
+
+/* ---------- math ---------- */
+const clamp = (x, a = 0, b = 1) => x < a ? a : x > b ? b : x;
+const lerp = (a, b, u) => a + (b - a) * u;
+const p = (t, t0, d) => clamp((t - t0) / d);
+function bez(x1, y1, x2, y2) {
+  const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx, cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
+  return x => {
+    if (x <= 0) return 0; if (x >= 1) return 1;
+    let u = x;
+    for (let i = 0; i < 10; i++) { const e = ((ax * u + bx) * u + cx) * u - x, d = (3 * ax * u + 2 * bx) * u + cx; if (Math.abs(e) < 1e-6 || Math.abs(d) < 1e-6) break; u -= e / d; }
+    u = clamp(u); return ((ay * u + by) * u + cy) * u;
+  };
+}
+const eOut = bez(.16, 1, .3, 1), eIO = bez(.65, 0, .35, 1), eIn = bez(.55, 0, .85, .35), eSoft = bez(.33, 1, .68, 1);
+// closed-form damped spring, 0 -> 1
+const spr = (t, t0, f = 2.4, z = .62) => { const x = t - t0; if (x <= 0) return 0; const w = 2 * Math.PI * f, wd = w * Math.sqrt(1 - z * z); return 1 - Math.exp(-z * w * x) * (Math.cos(wd * x) + (z * w / wd) * Math.sin(wd * x)); };
+const win = (t, a, b, fi = .4, fo = .4) => Math.min(p(t, a, fi), 1 - p(t, b - fo, fo));
+const bump = (t, t0, d = .45) => Math.sin(Math.PI * p(t, t0, d));
+const mixHex = (a, b, u) => { const h = s => [1, 3, 5].map(i => parseInt(s.slice(i, i + 2), 16)); const A = h(a), B = h(b); return 'rgb(' + A.map((v, i) => Math.round(lerp(v, B[i], u))).join(',') + ')'; };
+function rng(seed) { let s = seed >>> 0; return () => { s = (s + 0x6D2B79F5) >>> 0; let x = Math.imul(s ^ (s >>> 15), 1 | s); x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x; return ((x ^ (x >>> 14)) >>> 0) / 4294967296; }; }
+
+/* ---------- dom ---------- */
+function mk(parent, w, h, css, html) {
+  const n = document.createElement('div');
+  n.style.width = w + 'px'; n.style.height = h + 'px';
+  if (css) Object.assign(n.style, css);
+  if (html) n.innerHTML = html;
+  parent.appendChild(n); n._w = w; n._h = h; return n;
+}
+function SZ(n, w, h) { n._w = w; n._h = h; n.style.width = w.toFixed(2) + 'px'; n.style.height = h.toFixed(2) + 'px'; }
+function P(n, cx, cy, o = 1, s = 1, r = 0) {
+  if (!(o > .003)) { n.style.display = 'none'; return; }
+  n.style.display = ''; n.style.opacity = o >= .999 ? '1' : o.toFixed(4);
+  n.style.transform = `translate(${(cx - n._w / 2).toFixed(2)}px,${(cy - n._h / 2).toFixed(2)}px) rotate(${r.toFixed(3)}deg) scale(${s.toFixed(4)})`;
+}
+const img = (file, extra = '') => `url(assets/${file}) ${extra}`;
+
+/* ---------- icons ---------- */
+const coinSVG = s => `<svg class="rel" width="${s}" height="${s}" viewBox="0 0 100 100" style="display:block"><circle cx="50" cy="50" r="48" fill="url(#cg)"/><circle cx="50" cy="50" r="38.5" fill="none" stroke="rgba(255,255,255,.38)" stroke-width="2.5"/><path d="M57 15 30 56h17l-5 29 29-43H53z" fill="#FFF8E1"/></svg>`;
+const canSVG = (s, col = '#fff', hole = '#151515') => `<svg class="rel" width="${s}" height="${s}" viewBox="0 0 100 100" style="display:block"><g transform="rotate(-10 50 54)"><path d="M32 36h23l13 12v30a8 8 0 0 1-8 8H32a8 8 0 0 1-8-8V44a8 8 0 0 1 8-8z" fill="${col}"/><rect x="32" y="43" width="18" height="9.5" rx="4.75" fill="${hole}"/><rect x="59.5" y="26" width="11" height="13" rx="3.5" fill="${col}" transform="rotate(42 65 33)"/></g></svg>`;
+const tankRing = s => `<svg class="rel" width="${s}" height="${s}" viewBox="0 0 124 124" style="display:block"><circle cx="62" cy="62" r="60" fill="#151515"/><circle cx="62" cy="62" r="52" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="9"/><circle class="arc" cx="62" cy="62" r="52" fill="none" stroke="${LOGO}" stroke-width="9" stroke-linecap="round" pathLength="1" stroke-dasharray="1" stroke-dashoffset="0" transform="rotate(-90 62 62)"/><g transform="translate(25 24) scale(.74)"><g transform="rotate(-10 50 54)"><path d="M32 36h23l13 12v30a8 8 0 0 1-8 8H32a8 8 0 0 1-8-8V44a8 8 0 0 1 8-8z" fill="#fff"/><rect x="32" y="43" width="18" height="9.5" rx="4.75" fill="#151515"/><rect x="59.5" y="26" width="11" height="13" rx="3.5" fill="#fff" transform="rotate(42 65 33)"/></g></g></svg>`;
+const leafSVG = s => `<svg class="rel" width="${s}" height="${s}" viewBox="0 0 24 24" style="display:block"><path d="M20.4 3.6C11.2 3.1 4.6 7.9 4.6 15.3c0 1.2.2 2.3.6 3.2l-1.7 1.7a1 1 0 0 0 1.4 1.4l1.7-1.7c.9.4 2 .6 3.2.6 7.4 0 11.1-7.6 10.6-16.9z" fill="#151515"/><path d="M8.2 16.2c2.3-3.6 5-5.900 8.300-7.800" fill="none" stroke="${LIME}" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+const checkSVG = (s, col = '#151515', sw = 3.2) => `<svg class="rel" width="${s}" height="${s}" viewBox="0 0 24 24" style="display:block"><path d="M5.500 12.600l4.200 4.200 8.800-9.600" fill="none" stroke="${col}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const chatSVG = s => `<svg class="rel" width="${s}" height="${s}" viewBox="0 0 24 24" style="display:block"><path d="M12 3.200c-5 0-9 3.500-9 7.900 0 2.200 1 4.200 2.700 5.600l-.7 4.100 4.300-2.200c.9.200 1.800.3 2.700.3 5 0 9-3.500 9-7.800s-4-7.900-9-7.900z" fill="#fff"/><circle cx="8" cy="11.100" r="1.250" fill="#151515"/><circle cx="12" cy="11.100" r="1.250" fill="#151515"/><circle cx="16" cy="11.100" r="1.250" fill="#151515"/></svg>`;
+const clockSVG = s => `<svg class="rel" width="${s}" height="${s}" viewBox="0 0 24 24" style="display:block"><circle cx="12" cy="12" r="9" fill="none" stroke="#fff" stroke-width="2.200"/><path d="M12 7v5.300l3.400 2" fill="none" stroke="#fff" stroke-width="2.200" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const giftSVG = `<svg class="rel" width="230" height="150" viewBox="0 0 200 130" style="display:block"><g clip-path="url(#gc)"><rect x="4" y="4" width="192" height="122" fill="#2C2C2C"/><rect x="60" y="4" width="18" height="122" fill="${LIME}"/><rect x="4" y="54" width="192" height="18" fill="${LIME}"/></g><path d="M69 54C50 22 26 44 60 54M69 54C88 22 112 44 78 54" fill="none" stroke="${LIME}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const voucherSVG = `<svg class="rel" width="230" height="150" viewBox="0 0 200 130" style="display:block"><path d="M20 4h160a16 16 0 0 1 16 16v28a17 17 0 0 0 0 34v28a16 16 0 0 1-16 16H20A16 16 0 0 1 4 110V82a17 17 0 0 0 0-34V20A16 16 0 0 1 20 4z" fill="#2C2C2C"/><path d="M134 16v98" stroke="#1E1E1E" stroke-width="4" stroke-dasharray="7 8" stroke-linecap="round"/><rect x="30" y="42" width="78" height="12" rx="6" fill="rgba(255,255,255,.3)"/><rect x="30" y="66" width="52" height="12" rx="6" fill="rgba(255,255,255,.16)"/><circle cx="165" cy="65" r="12" fill="${PURPLE}"/></svg>`;
+const FLAGS = {
+  de: 'linear-gradient(#111 0 33.300%,#DD0000 33.300% 66.600%,#FFCE00 66.600%)', fr: 'linear-gradient(90deg,#0055A4 0 33.300%,#fff 33.300% 66.600%,#EF4135 66.600%)',
+  it: 'linear-gradient(90deg,#009246 0 33.300%,#fff 33.300% 66.600%,#CE2B37 66.600%)', nl: 'linear-gradient(#AE1C28 0 33.300%,#fff 33.300% 66.600%,#21468B 66.600%)',
+  pl: 'linear-gradient(#fff 0 50%,#DC143C 50%)', at: 'linear-gradient(#ED2939 0 33.300%,#fff 33.300% 66.600%,#ED2939 66.600%)',
+};
+const avatar = (parent, d, id, bg) => { const n = mk(parent, d, d, { borderRadius: '50%', background: bg, overflow: 'hidden' }); mk(n, d, d, { background: img(`av_${id}.png`, '50% 0/cover no-repeat'), width: '100%', height: '100%' }); return n; };
+
+/* ---------- layers ---------- */
+const glowP = mk(stage, 1100, 1100, { background: 'radial-gradient(closest-side,rgba(142,63,216,.5),rgba(142,63,216,.16) 48%,rgba(142,63,216,0))' });
+const glowL = mk(stage, 900, 900, { background: 'radial-gradient(closest-side,rgba(202,253,58,.32),rgba(202,253,58,.09) 48%,rgba(202,253,58,0))' });
+const mapN = mk(stage, 1500, 1745, { background: img('map.png', 'center/100% 100% no-repeat'), transformOrigin: '36% 36%', webkitMaskImage: 'linear-gradient(180deg,transparent 4%,#000 16%,#000 62%,transparent 80%)' });
+const world = mk(stage, 1080, 1920, { transformOrigin: '540px 1050px' });
+const textL = mk(stage, 1080, 1920);
+const topL = mk(stage, 1080, 1920);
+
+/* ---------- B: season covers + chip ---------- */
+const COV = [1, 2, 3, 4].map((i, k) => mk(world, 560, 728, { borderRadius: '44px', background: img(`cover${i}.jpg`, 'center/cover no-repeat'), boxShadow: '0 44px 90px rgba(0,0,0,.42)', zIndex: 4 - k }));
+const chipLabel = mk(world, 10, 64, { width: 'auto', fontSize: '58px', lineHeight: '64px', whiteSpace: 'nowrap', zIndex: 6 }, `<span class="cv" style="color:${LIME}">Open Season</span><span class="cv" style="margin-left:10px">2</span>`);
+const DIG = [1, 2, 3, 4].map(n => mk(world, 60, 60, { fontSize: '58px', lineHeight: '60px', textAlign: 'center' }, `<span class="cv">${n}</span>`));
+
+/* ---------- B/C/D/E: tour pills -> leaderboard rows -> podium ---------- */
+const RD = [
+  { av: '056', bg: '#C7B8F0', flag: 'de', nw: 210, pw: 100 },
+  { av: '048', bg: '#A8E6BE', flag: 'fr', nw: 170, pw: 92 },
+  { av: '019', bg: '#A9D4F2', flag: 'it', nw: 240, pw: 84 },
+  { av: '024', bg: '#D9D9D9', flag: 'nl', nw: 190, pw: 76, user: true },
+  { av: '053', bg: '#F4A3AE', flag: 'pl', nw: 120, pw: 64 },
+  { av: '030', bg: '#D8DCC3', flag: 'at', nw: 220, pw: 56 },
+];
+const PLACE = { 0: 0, 3: 1, 1: 2 };                                   // row index -> podium place
+const COL = [{ x: 540, H: 600 }, { x: 222, H: 490 }, { x: 858, H: 400 }];
+const ROW = RD.map((d, i) => {
+  const n = mk(world, 920, 124, { borderRadius: '38px', overflow: 'visible', zIndex: d.user ? 8 : 5 });
+  const r = { d, n };
+  r.gold = mk(n, 10, 10, { inset: '0', width: '100%', height: '100%', borderRadius: 'inherit', background: 'linear-gradient(0deg,rgba(255,194,26,.2),rgba(255,194,26,0) 72%)' });
+  r.fillW = mk(n, 10, 10, { inset: '0', width: '100%', height: '100%', borderRadius: 'inherit', overflow: 'hidden' });
+  r.fill = mk(r.fillW, 10, 10, { height: '100%', background: LIME, borderRadius: 'inherit' });
+  r.rank1 = mk(n, 60, 44, { fontWeight: 600, fontSize: '36px', lineHeight: '44px', textAlign: 'center', color: 'rgba(255,255,255,.5)' }, String(i + 1));
+  r.rank2 = mk(n, 60, 44, { fontWeight: 600, fontSize: '36px', lineHeight: '44px', textAlign: 'center', color: 'rgba(255,255,255,.5)' }, '');
+  r.ring = mk(n, 108, 108, { borderRadius: '50%', border: `5px solid ${LOGO}` });
+  r.av = avatar(n, 88, d.av, d.bg);
+  r.flag = mk(n, 38, 27, { borderRadius: '6px', background: FLAGS[d.flag], boxShadow: `0 0 0 3px ${CARD}` });
+  r.name = mk(n, d.nw, 18, { borderRadius: '9px', background: '#fff' });
+  r.kmT = mk(n, 190, 8, { borderRadius: '4px', background: 'rgba(255,255,255,.12)', overflow: 'hidden' });
+  r.kmF = mk(r.kmT, 190, 8, { borderRadius: '4px', background: LIME, transformOrigin: '0 50%' });
+  r.leaf = mk(n, 44, 44, { borderRadius: '50%', background: LIME }, `<div class="cen" style="inset:0;width:100%;height:100%">${leafSVG(28)}</div>`);
+  r.coin = mk(n, 40, 40, {}, coinSVG(40));
+  r.pts = mk(n, d.pw, 18, { borderRadius: '9px', background: 'rgba(255,194,26,.42)' });
+  r.arr = mk(n, 26, 22, {}, `<svg class="rel" width="26" height="22" viewBox="0 0 26 22" style="display:block"><path d="M13 3 23 19H3z" fill="${d.user ? LIME : 'rgba(255,255,255,.34)'}" stroke="${d.user ? LIME : 'rgba(255,255,255,.34)'}" stroke-width="3" stroke-linejoin="round"/></svg>`);
+  r.crown = mk(n, 70, 70, { background: img('crown.png', 'center/contain no-repeat') });
+  r.num = mk(n, 120, 120, { fontSize: '124px', lineHeight: '120px', textAlign: 'center' }, `<span class="cv">${(PLACE[i] ?? 0) + 1}</span>`);
+  r.dol = mk(n, 150, 68, { borderRadius: '34px', background: '#151515', border: '1.5px solid rgba(255,255,255,.1)' }, `<div class="cen" style="inset:0;width:100%;height:100%;gap:12px;font-weight:600;font-size:36px">$<span style="letter-spacing:5px;color:rgba(255,255,255,.55);font-size:30px;margin-top:-14px">...</span></div>`);
+  return r;
+});
+const NEWRANK = { 3: '2', 1: '3', 2: '4' };
+ROW.forEach((r, i) => { if (NEWRANK[i]) r.rank2.textContent = NEWRANK[i]; });
+
+/* ---------- hand-drawn arrows / lines ---------- */
+const NS = 'http://www.w3.org/2000/svg';
+const fx = document.createElementNS(NS, 'svg'); fx.setAttribute('class', 'abs'); fx.setAttribute('width', 1080); fx.setAttribute('height', 1920); fx.style.zIndex = 20; fx.style.overflow = 'visible'; world.appendChild(fx);
+function arrow(d, ex, ey, ang, col = PURPLE, wdt = 5) {
+  const g = document.createElementNS(NS, 'g'); g.setAttribute('fill', 'none'); g.setAttribute('stroke', col); g.setAttribute('stroke-width', wdt); g.setAttribute('stroke-linecap', 'round'); g.setAttribute('stroke-linejoin', 'round');
+  const a = document.createElementNS(NS, 'path'); a.setAttribute('d', d); a.setAttribute('pathLength', 1); a.setAttribute('stroke-dasharray', 1);
+  const h = document.createElementNS(NS, 'path'); const L = 20, r = Math.PI / 180;
+  const pt = s => `${(ex - L * Math.cos((ang + s) * r)).toFixed(1)} ${(ey - L * Math.sin((ang + s) * r)).toFixed(1)}`;
+  h.setAttribute('d', `M${pt(30)} L${ex} ${ey} L${pt(-30)}`);
+  g.appendChild(a); g.appendChild(h); fx.appendChild(g);
+  return (q, o = 1) => { if (q <= .001 || o <= .003) { g.style.display = 'none'; return; } g.style.display = ''; g.style.opacity = o.toFixed(3); a.style.strokeDashoffset = (1 - q).toFixed(4); h.style.opacity = p(q, .82, .18).toFixed(3); };
+}
+const arOchki = arrow('M700 944 C716 934 736 936 752 948', 752, 948, 38);
+const arNick = arrow('M596 1096 C584 1104 570 1102 558 1092', 558, 1092, 218);
+const arFlag = arrow('M548 1384 C486 1426 366 1430 304 1404', 304, 1404, 200);
+const arInvite = arrow('M392 806 C470 724 612 724 690 800', 690, 800, 48);
+const arBack = arrow('M692 962 C614 1040 470 1040 394 968', 394, 968, 224);
+const CALL = [
+  { txt: 'очки', x: 648, y: 946 }, { txt: 'никнеймы', x: 690, y: 1088 }, { txt: 'флаги стран', x: 652, y: 1366 },
+].map(c => Object.assign(c, { n: mk(world, 300, 60, { fontFamily: 'Caveat', fontWeight: 700, fontSize: '52px', lineHeight: '60px', textAlign: 'center', zIndex: 21, whiteSpace: 'nowrap' }, c.txt) }));
+function line(x1, y1, x2, y2) { const l = document.createElementNS(NS, 'path'); l.setAttribute('d', `M${x1} ${y1} L${x2} ${y2}`); l.setAttribute('pathLength', 1); l.setAttribute('fill', 'none'); l.setAttribute('stroke', LIME); l.setAttribute('stroke-width', 3); l.setAttribute('stroke-linecap', 'round'); l.setAttribute('stroke-dasharray', '1'); fx.appendChild(l); return l; }
+
+/* ---------- hero avatar (the user) ---------- */
+const heroRing = mk(world, 10, 10, { border: `7px solid ${LOGO}`, zIndex: 30 });
+const hero = mk(world, 10, 10, { overflow: 'hidden', zIndex: 31, background: '#D9D9D9' });
+mk(hero, 10, 10, { inset: '0', width: '100%', height: '100%', background: img('av_024.png', '50% 0/cover no-repeat') });
+const heroBadge = mk(world, 64, 64, { zIndex: 33 }, tankRing(64));
+
+/* ---------- F: reward options ---------- */
+const OPT = [{ x: 310, svg: giftSVG, label: 'Подарочные<br>карты' }, { x: 770, svg: voucherSVG, label: 'Ваучеры' }].map(o => {
+  const n = mk(world, 420, 470, { borderRadius: '44px', background: CARD, border: '1.5px solid rgba(255,255,255,.07)', zIndex: 10 });
+  mk(n, 230, 150, { left: '95px', top: '64px' }, o.svg);
+  mk(n, 420, 120, { top: '268px', textAlign: 'center', fontWeight: 600, fontSize: '42px', lineHeight: '50px', letterSpacing: '-.02em' }, o.label);
+  o.sel = mk(n, 420, 470, { left: '-1.5px', top: '-1.5px', borderRadius: '44px', border: `4px solid ${LIME}` });
+  o.chk = mk(n, 64, 64, { borderRadius: '50%', background: LIME }, `<div class="cen" style="inset:0;width:100%;height:100%">${checkSVG(38)}</div>`);
+  o.n = n; return o;
+});
+
+/* ---------- G: bonus chips ---------- */
+const CHIP = [
+  mk(world, 310, 108, { zIndex: 12, fontSize: '46px', letterSpacing: '-.02em' }, `<div class="rel" style="width:64px;height:64px;border-radius:17px;background:${img('appicon.png', 'center/cover')}"></div>OONE`),
+  mk(world, 290, 108, { zIndex: 12, fontSize: '46px', letterSpacing: '-.02em' }, `${tankRing(68)}баки`),
+];
+CHIP.forEach(c => c.classList.add('pill'));
+
+/* ---------- H: two balances ---------- */
+const HC = [0, 1].map(k => {
+  const n = mk(world, 920, 300, { borderRadius: '48px', background: CARD, border: '1.5px solid rgba(255,255,255,.07)', zIndex: 10 });
+  const o = { n };
+  o.glow = mk(n, 420, 420, { left: '-60px', top: '-60px', background: `radial-gradient(closest-side,${k ? 'rgba(202,253,58,.2)' : 'rgba(255,194,26,.2)'},transparent)` });
+  o.icon = k ? mk(n, 150, 150, { borderRadius: '38px', background: img('appicon.png', 'center/cover') }) : mk(n, 150, 150, {}, coinSVG(150));
+  o.txt = mk(n, 600, 120, { left: '268px', top: '88px', fontWeight: 500, fontSize: '45px', lineHeight: '58px', letterSpacing: '-.025em' },
+    k ? `<div class="ln"><b style="font-weight:700;color:${LIME}">OONE</b> — это отдельный</div><div class="ln">баланс</div>`
+      : `<div class="ln"><b style="font-weight:700;color:${GOLD}">Sparks</b> определяют результат</div><div class="ln">в соревновании</div>`);
+  o.ln = [...o.txt.children];
+  o.plus = mk(world, k ? 216 : 200, 76, { zIndex: 13, fontSize: '38px', background: '#151515', color: k ? '#fff' : GOLD }, k ? `+0.30<div class="rel" style="width:40px;height:40px;border-radius:11px;background:${img('appicon.png', 'center/cover')}"></div>` : `+500${coinSVG(42)}`);
+  o.plus.classList.add('pill'); o.plus.style.background = '#151515'; o.plus.style.gap = '12px';
+  return o;
+});
+
+/* ---------- T2 / I: community, nickname, avatar ---------- */
+const SIDE = [{ id: '048', bg: '#A8E6BE', dx: -122 }, { id: '019', bg: '#A9D4F2', dx: 122 }].map(s => Object.assign(s, { n: avatar(world, 132, s.id, s.bg) }));
+SIDE.forEach(s => s.n.style.zIndex = 29);
+const PEEK = [{ id: '056', bg: '#D8DCC3', x: 132 }, { id: '033', bg: '#F4A3AE', x: 948 }].map(s => {
+  const n = mk(world, 340, 430, { borderRadius: '40px', background: s.bg, overflow: 'hidden', zIndex: 20 });
+  mk(n, 10, 10, { inset: '0', width: '100%', height: '100%', background: img(`av_${s.id}.png`, '50% 0/cover no-repeat') });
+  return Object.assign(s, { n });
+});
+const DOTC = ['#D8DCC3', '#A69F7E', '#F4A3AE', '#C7B8F0', '#A9D4F2', '#A8E6BE'];
+const DOT = DOTC.map(c => mk(world, 46, 46, { borderRadius: '50%', background: c, zIndex: 20 }));
+const dotRing = mk(world, 66, 66, { borderRadius: '50%', border: '3.5px solid #fff', zIndex: 20 });
+const nick = mk(world, 440, 96, { borderRadius: '48px', background: CARD, border: '1.5px solid rgba(255,255,255,.08)', zIndex: 20 });
+mk(nick, 60, 96, { left: '34px', fontWeight: 600, fontSize: '46px', lineHeight: '92px', color: 'rgba(255,255,255,.55)' }, '@');
+const nickBar = mk(nick, 200, 22, { left: '92px', top: '37px', borderRadius: '11px', background: 'rgba(255,255,255,.3)' });
+const nickStar = mk(nick, 44, 44, { left: '366px', top: '26px' }, `<svg class="rel" width="44" height="44" viewBox="0 0 24 24" style="display:block"><path d="M12 2.500c.8 4.700 2.200 6.900 9.500 9.500-7.300 2.600-8.700 4.800-9.500 9.500-.8-4.700-2.200-6.900-9.500-9.500 7.300-2.600 8.700-4.800 9.500-9.500z" fill="${LIME}"/></svg>`);
+
+/* ---------- J: map pins ---------- */
+const CL = [
+  { x: 262, y: 905, n: 96, av: [['002', '#F4A3AE'], ['043', '#D8DCC3'], ['064', '#A9D4F2']], league: true },
+  { x: 815, y: 868, n: 73, av: [['005', '#C7B8F0'], ['044', '#A8E6BE']], league: true },
+  { x: 850, y: 1345, n: 20, av: [['057', '#D8DCC3'], ['053', '#F4A3AE']], league: false },
+  { x: 240, y: 1432, n: 48, av: [['030', '#A69F7E'], ['006', '#A9D4F2'], ['035', '#C7B8F0']], league: true },
+  { x: 560, y: 1622, n: 88, av: [['038', '#A8E6BE'], ['033', '#D8DCC3']], league: false },
+].map(c => {
+  const w = 60 + c.av.length * 62, n = mk(world, w, 110, { zIndex: 22 });
+  c.av.forEach(([id, bg], k) => { const a = avatar(n, 86, id, bg); a.style.left = (k * 60) + 'px'; a.style.top = (k % 2 ? 0 : 20) + 'px'; a.style.boxShadow = '0 0 0 4px #151515'; });
+  mk(n, 56, 56, { left: (c.av.length * 60 - 4) + 'px', top: '46px', borderRadius: '50%', background: '#1E1E1E', boxShadow: '0 0 0 4px #151515', fontWeight: 600, fontSize: '24px', lineHeight: '56px', textAlign: 'center' }, String(c.n));
+  return Object.assign(c, { node: n });
+});
+const PULSE = [0, 1].map(() => mk(world, 200, 200, { borderRadius: '50%', border: `4px solid ${LOGO}`, zIndex: 28 }));
+const LLINE = CL.filter(c => c.league).map(c => line(540, 1210, c.x, c.y));
+
+/* ---------- K: who can message you ---------- */
+const sheet = mk(world, 920, 560, { borderRadius: '52px', background: CARD, border: '1.5px solid rgba(255,255,255,.07)', zIndex: 40, boxShadow: '0 -30px 90px rgba(0,0,0,.4)' });
+const selBg = mk(sheet, 872, 150, { left: '24px', borderRadius: '36px', background: 'rgba(255,255,255,.06)' });
+const SOPT = ['Все участники', 'Только люди из вашей страны', 'Никто'].map((label, i) => {
+  const o = { y: 55 + i * 150 + 75 };
+  mk(sheet, 700, 60, { left: '150px', top: (o.y - 30) + 'px', fontWeight: 500, fontSize: '42px', lineHeight: '60px', letterSpacing: '-.02em', whiteSpace: 'nowrap' }, label);
+  mk(sheet, 56, 56, { left: '62px', top: (o.y - 28) + 'px', borderRadius: '50%', border: '3.5px solid rgba(255,255,255,.28)' });
+  if (i) mk(sheet, 780, 2, { left: '70px', top: (o.y - 76) + 'px', background: 'rgba(255,255,255,.06)' });
+  return o;
+});
+const radio = mk(sheet, 56, 56, { borderRadius: '50%', background: LIME }, `<div class="cen" style="inset:0;width:100%;height:100%">${checkSVG(34)}</div>`);
+const chatBtn = mk(world, 104, 104, { borderRadius: '50%', background: CARD, border: '1.5px solid rgba(255,255,255,.1)', zIndex: 34 }, `<div class="cen" style="inset:0;width:100%;height:100%">${chatSVG(52)}</div><div class="cen" style="left:70px;top:-10px;width:44px;height:44px;border-radius:50%;background:${LOGO};color:#151515;font-weight:700;font-size:26px">1</div>`);
+
+/* ---------- L: invite friends -> tanks ---------- */
+const friend = avatar(world, 170, '048', '#A8E6BE'); friend.style.zIndex = 31;
+const TANK = [0, 1, 2, 3, 4].map(() => mk(world, 132, 132, { zIndex: 24 }, tankRing(132)));
+const road = mk(world, 688, 8, { borderRadius: '4px', background: 'rgba(255,255,255,.12)', overflow: 'hidden', zIndex: 24 });
+const roadF = mk(road, 688, 8, { borderRadius: '4px', background: LIME, transformOrigin: '0 50%' });
+const kmLab = mk(world, 400, 90, { zIndex: 24, textAlign: 'center', fontWeight: 600, fontSize: '76px', lineHeight: '90px', letterSpacing: '-.04em', whiteSpace: 'nowrap' }, `<span id="kmN">0</span><span style="font-size:46px;margin-left:12px;color:rgba(255,255,255,.7);letter-spacing:-.01em">км</span>`);
+const days = mk(world, 250, 82, { zIndex: 24, fontSize: '38px', letterSpacing: '-.02em' }, `${clockSVG(38)}30 дней`); days.classList.add('pill'); days.style.gap = '12px';
+
+/* ---------- M: notifications ---------- */
+const BAN = ['Старт сезона', 'Завершение туров', 'Награды', 'Bi-bip'].map((title, i) => {
+  const n = mk(world, 920, 140, { borderRadius: '40px', background: CARD, border: '1.5px solid rgba(255,255,255,.08)', zIndex: 50 + i, boxShadow: '0 24px 60px rgba(0,0,0,.35)' });
+  mk(n, 84, 84, { left: '28px', top: '28px', borderRadius: '22px', background: img('appicon.png', 'center/cover') });
+  mk(n, 600, 50, { left: '136px', top: '28px', fontWeight: 600, fontSize: '40px', lineHeight: '50px', letterSpacing: '-.025em', whiteSpace: 'nowrap' }, title);
+  mk(n, [330, 280, 360, 240][i], 14, { left: '138px', top: '92px', borderRadius: '7px', background: 'rgba(255,255,255,.16)' });
+  mk(n, 100, 30, { left: '792px', top: '34px', fontWeight: 500, fontSize: '26px', lineHeight: '30px', textAlign: 'right', color: 'rgba(255,255,255,.4)' }, 'OONE');
+  return n;
+});
+
+/* ---------- top brand + type ---------- */
+const logo = mk(topL, 150, 150, { background: img('logo_lime.png', 'center/contain no-repeat') });
+const U = l => `<span class="u">${l}</span>`, AC = l => `<span class="acc">${l}</span>`;
+const HY = 262, subY = n => HY + n * 82 + 22;
+const TEXTS = [
+  { k: 't', y: 846, t0: .15, t1: 1.02, lines: ['Соревнования', 'и ' + U('награды')] },
+  { k: 'e', y: 176, t0: 1.0, t1: 17.95, lines: ['Соревнования и награды'] },
+  { k: 'h', t0: S.B, t1: S.C, lines: ['Сезоны и туры'] },
+  { k: 's', t0: S.B + .12, t1: S.C, y: subY(1), lines: ['Каждый сезон состоит из ' + `<span class="acc u">четырёх туров</span>`] },
+  { k: 'h', t0: S.C, t1: S.D, lines: ['Таблица участников'] },
+  { k: 'h', t0: S.D, t1: S.E, lines: ['Значки за достижения'] },
+  { k: 's', t0: S.D + .12, t1: 7.4, y: subY(1), lines: ['Участники ' + AC('первой тройки') + ' получают', 'специальную отметку лидера'] },
+  { k: 's', t0: 7.4, t1: S.E, y: subY(1), lines: ['Высокая доля зелёных километров', 'отмечается значком ' + AC('с зелёным листом')] },
+  { k: 'h', t0: S.E, t1: S.F, lines: ['Призы за результаты'] },
+  { k: 's', t0: S.E + .12, t1: S.F, y: subY(1), lines: ['Размер награды зависит от ' + AC('занятого места'), 'и условий соревнования'] },
+  { k: 'h', t0: S.F, t1: S.G, lines: ['Получение награды'] },
+  { k: 'h', t0: S.G, t1: S.H, lines: ['Дополнительные', 'поощрения'] },
+  { k: 'h', t0: S.H, t1: S.T2 - .05, lines: ['OONE — отдельная', 'награда за поездки'] },
+  { k: 't', y: 720, t0: K.t2, t1: 19.02, lines: ['Сообщество', 'и ' + U('общение')] },
+  { k: 'e', y: 176, t0: 19.0, t1: 29.45, lines: ['Сообщество и общение'] },
+  { k: 'h', t0: S.I, t1: S.J, lines: ['Никнейм', 'Аватар или фото'] },
+  { k: 's', t0: S.I + .12, t1: S.J, y: subY(2), lines: ['У каждого участника есть ' + AC('уникальный никнейм')] },
+  { k: 'h', t0: S.J, t1: S.K, lines: ['Участники на карте'] },
+  { k: 's', t0: S.J + .12, t1: S.K, y: subY(1), lines: ['Отображаются только участники ' + AC('в вашей лиге')] },
+  { k: 'h', t0: S.K, t1: S.L, lines: ['Настройки общения'] },
+  { k: 'h', t0: S.L, t1: S.M, lines: ['Приглашайте друзей —', 'получайте баки'] },
+  { k: 's', t0: S.L + .12, t1: S.M, y: subY(2), lines: ['Приглашённый участник получает', `<span class="acc u">5 бонусных баков на 50 км</span>`] },
+  { k: 'h', t0: S.M, t1: 29.46, lines: ['Уведомления', 'о важных событиях'] },
+];
+TEXTS.forEach(tx => {
+  const b = mk(tx.k === 'e' ? topL : textL, 960, 10, { left: '60px', top: (tx.y ?? HY) + 'px', height: 'auto' });
+  b.className = 'tx ' + tx.k;
+  tx.lines.forEach(l => { const d = document.createElement('div'); d.className = 'ln'; d.innerHTML = l; b.appendChild(d); });
+  tx.box = b; tx.ln = [...b.children];
+});
+function lineAnim(d, t, t0, t1, i) {
+  const a = eOut(p(t, t0 + i * .07, .6)), out = t1 == null ? 0 : eIn(p(t, t1 - .24, .24));
+  const o = a * (1 - out), bl = (1 - a) * 10 + out * 6;
+  d.style.transform = `translateY(${((1 - a) * 36 - out * 22).toFixed(2)}px)`;
+  d.style.opacity = o.toFixed(4);
+  d.style.filter = bl > .05 ? `blur(${bl.toFixed(2)}px)` : 'none';
+}
+
+/* ---------- one-time layout that needs real font metrics ---------- */
+let chipW = 300;
+function layout() {
+  const r = rng(7);
+  TEXTS.forEach(tx => {
+    tx.ln.forEach(d => { const w = d.scrollWidth; if (w > 950) d.style.fontSize = (parseFloat(getComputedStyle(d).fontSize) * 950 / w).toFixed(2) + 'px'; });
+    tx.ul = [];
+    tx.box.querySelectorAll('.u').forEach(u => {
+      const w = u.offsetWidth + 16, j = () => (r() - .5) * 5;
+      const d = `M4 ${9 + j()} C${w * .28} ${3 + j()} ${w * .62} ${5 + j()} ${w - 2} ${10 + j()} C${w * .7} ${12 + j()} ${w * .32} ${14 + j()} 12 ${19 + j()} C${w * .36} ${15 + j()} ${w * .7} ${17 + j()} ${w - 8} ${21 + j()}`;
+      u.insertAdjacentHTML('beforeend', `<svg width="${w}" height="26"><path pathLength="1" d="${d}"/></svg>`);
+      tx.ul.push(u.querySelector('path'));
+    });
+  });
+  chipW = chipLabel.offsetWidth; chipLabel._w = chipW;
+}
+
+/* ---------- poses of the hero avatar ---------- */
+const circ = (cx, cy, d, ring = 1) => ({ cx, cy, w: d, h: d, rad: d / 2, ring });
+const POSE = { F: circ(540, 800, 136), T2: circ(540, 1150, 176), I: { cx: 540, cy: 1120, w: 420, h: 520, rad: 48, ring: 0 }, J: circ(540, 1210, 128), K: circ(540, 772, 128), L: circ(290, 884, 170) };
+const mixP = (a, b, m) => ({ cx: lerp(a.cx, b.cx, m), cy: lerp(a.cy, b.cy, m), w: lerp(a.w, b.w, m), h: lerp(a.h, b.h, m), rad: lerp(a.rad, b.rad, m), ring: lerp(a.ring, b.ring, m) });
+
+/* =====================================================================
+   renderAt(t): the whole film is a pure function of time
+   ===================================================================== */
+function renderAt(t) {
+  t = clamp(t, 0, TL.DUR);
+  const TAU = Math.PI * 2;
+
+  /* camera: slow breathing, one gentle push-in on the badge beat */
+  const push = win(t, 7.4, 9.75, 1.3, .5);
+  const cs = 1 + .008 * Math.sin(TAU * t / 11) + .045 * eIO(push);
+  world.style.transform = `translate(0px,${(4 * Math.sin(TAU * t / 9) - 26 * eIO(push)).toFixed(2)}px) scale(${cs.toFixed(5)})`;
+
+  /* soft glows (heavily blurred, never more than a third of the frame) */
+  {
+    let x = 540, y = 950, o = 0, s = 1;
+    if (t < 12) { o = .5 * win(t, 7.4, 9.5, .8, .4); y = 960; }
+    else if (t < 16) { o = .55 * win(t, 13.45, 14.7, .35, .35); y = 1140; s = .9; }
+    else if (t < 23) { o = .5 * win(t, 18.05, 21.45, .5, .4); y = 1150; }
+    else { o = .42 * win(t, 26.1, 28.5, .6, .35); y = 1190; }
+    P(glowP, x, y, o, s);
+    let lo = .55 * (1 - p(t, .75, .5)) * p(t, 0, .35), ly = lerp(705, 112, eIO(p(t, .78, .6)));
+    if (t > 20) { lo = .6 * p(t, K.end + .1, .4); ly = 960; }
+    P(glowL, 540, ly, lo, t > 20 ? 1 : lerp(1, .5, eIO(p(t, .78, .6))));
+  }
+
+  /* brand mark: opens centred, parks at the top, returns for the sign-off */
+  {
+    const mUp = eIO(p(t, .78, .62)), mEnd = eIO(p(t, K.end, .5));
+    const cy = lerp(lerp(705, 112, mUp), 960, mEnd), sc = lerp(lerp(1, .36, mUp), 1, mEnd);
+    P(logo, 540, cy, p(t, 0, .3), sc * (.86 + .14 * spr(t, 0, 1.8, .7)));
+  }
+
+  /* ---- B: covers ---- */
+  {
+    const a = eOut(p(t, .95, .8)), f = eOut(p(t, 1.1, .9)), fly = eIn(p(t, K.swap, .45)), sw = eIO(p(t, K.swap + .02, .5));
+    const mC = eIO(p(t, 3.38, .6)), oOth = a * (1 - p(t, 3.38, .22)), rise = (1 - a) * 130;
+    const fl = k => 4 * Math.sin(TAU * (t * .3 + k * .27));
+    const thumbX = 540 - (84 + 18 + chipW) / 2 + 42;
+    // c0: first season, leaves when its four tours are done
+    SZ(COV[0], 560, 728); P(COV[0], 540 - 980 * fly, 1105 + rise + fl(0) + 20 * fly, a * (1 - p(t, K.swap + .28, .17)), 1, -15 * fly);
+    // c1: next season comes forward, then shrinks into the league chip
+    const w1 = lerp(560, 84, mC), h1 = lerp(728, 84, mC);
+    SZ(COV[1], w1, h1); COV[1].style.borderRadius = lerp(44, 24, mC).toFixed(1) + 'px';
+    COV[1].style.boxShadow = `0 ${lerp(44, 8, mC).toFixed(0)}px ${lerp(90, 20, mC).toFixed(0)}px rgba(0,0,0,.42)`;
+    P(COV[1], lerp(540 + lerp(78 * f, 0, sw), thumbX, mC), lerp(1105 + rise + lerp(14, 0, sw) + fl(1) * (1 - mC), 700, mC), a * (1 - p(t, K.podium, .25)), lerp(lerp(.93, 1, sw), 1, mC), lerp(7 * f, 0, sw));
+    SZ(COV[2], 560, 728); P(COV[2], 540 - 78 * f, 1105 + rise + 14 + fl(2), oOth, .93 - .05 * mC, -7 * f);
+    SZ(COV[3], 560, 728); P(COV[3], 540 + 78 * f * sw, 1105 + rise + lerp(-36, 14, sw) + fl(3), oOth, lerp(.88, .93, sw) - .05 * mC, 7 * f * sw);
+    const cl = eOut(p(t, 3.74, .6));
+    P(chipLabel, thumbX + 42 + 18 + chipW / 2, 700 + (1 - cl) * 24, cl * (1 - p(t, K.podium, .25)));
+    DIG.forEach((d, i) => {
+      const e = eOut(p(t, 1.25 + i * .06, .5)), done = p(t, K.segFill0 + (i + 1) * K.segDur - .08, .12) * (1 - p(t, K.swap + .05, .25));
+      d.style.color = done > .5 ? LIME : 'rgba(255,255,255,.42)';
+      P(d, 225 + i * 210, 1546 + (1 - e) * 20, e * (1 - p(t, 3.34, .2)), 1 + .22 * bump(t, K.segFill0 + (i + 1) * K.segDur - .06, .35));
+    });
+  }
+
+  /* ---- B..E: tour pills -> leaderboard rows -> podium ---- */
+  {
+    const swp = eIO(p(t, K.rank, .62));
+    const outF = eIn(p(t, 11.85, .38));
+    ROW.forEach((r, i) => {
+      const d = r.d, isPill = i < 4;
+      const mR = isPill ? eIO(p(t, K.rowsMorph + i * .04, .6)) : 1;
+      const aIn = isPill ? eOut(p(t, 1.25 + i * .06, .5)) : eOut(p(t, 3.72 + (i - 4) * .08, .6));
+      let pos = i; if (i === 3) pos = lerp(3, 1, swp); else if (i === 1 || i === 2) pos = lerp(i, i + 1, swp);
+      const place = PLACE[i], inPod = place !== undefined, mE = inPod ? eIO(p(t, K.podium + .02 * place, .65)) : 0;
+      let x = lerp(225 + i * 210, 540, mR), y = lerp(1600, 810 + pos * 140, mR), w = lerp(190, 920, mR), h = lerp(16, 124, mR), rad = lerp(8, 38, mR);
+      let o = aIn, sc = 1;
+      if (!isPill) y += (1 - aIn) * 70; else y += (1 - aIn) * 20 * (1 - mR);
+      if (d.user) sc = 1 + .03 * Math.sin(Math.PI * p(t, K.rank, .62));
+      if (inPod) {
+        const c = COL[place], hh = 190 + (c.H - 190) * spr(t, K.colRise[place], 1.5, .72);
+        x = lerp(x, c.x, mE); w = lerp(w, 290, mE); h = lerp(h, hh, mE); y = lerp(y, 1700 - hh / 2, mE); rad = lerp(rad, 44, mE);
+        o *= 1 - outF; y += 50 * outF;
+      } else o *= 1 - p(t, K.podium, .3);
+      SZ(r.n, w, h); r.n.style.borderRadius = rad.toFixed(1) + 'px';
+      const L = Math.round(lerp(52, 30, mR)) + (d.user ? Math.round(5 * mR * (1 - mE)) : 0);
+      r.n.style.background = `rgb(${L},${L},${L})`;
+      r.n.style.border = mR > .5 ? '1.5px solid rgba(255,255,255,.07)' : 'none';
+      P(r.n, x, y, o, sc);
+      if (o <= .003) return;
+      // tour fill (pill state only)
+      const fp = isPill ? eSoft(p(t, K.segFill0 + i * K.segDur, K.segDur)) : 0, fo = (1 - p(t, K.swap + .05, .25)) * (1 - mR);
+      r.fill.style.width = (fp * 100).toFixed(2) + '%'; r.fillW.style.opacity = fo.toFixed(3); r.fillW.style.display = fo > .003 ? '' : 'none';
+      // row furniture
+      const cIn = p(t, 3.82 + i * .05, .3), cRow = cIn * (1 - p(t, K.podium, .22)), cy = h / 2;
+      const rk = p(t, K.rank + .3, .25), hasNew = !!NEWRANK[i];
+      P(r.rank1, 50, cy, cRow * (hasNew ? 1 - rk : 1)); P(r.rank2, 50, cy, hasNew ? cRow * rk : 0);
+      const ad = lerp(88, 124, mE), ax = lerp(140, w / 2, mE), ay = lerp(cy, 104, mE);
+      SZ(r.av, ad, ad); P(r.av, ax, ay, cIn);
+      if (d.user) { SZ(r.ring, ad + 22, ad + 22); P(r.ring, ax, ay, cIn * (1 - p(t, 11.84, .02))); } else P(r.ring, 0, 0, 0);
+      if (d.user) r.av.style.visibility = t >= 11.85 ? 'hidden' : '';
+      P(r.flag, 186, cy + 27, cRow, 1 + .32 * bump(t, K.call[2] + i * .03, .5));
+      const gs = d.user ? eOut(p(t, K.leaf - .12, .5)) : 0, nb = bump(t, K.call[1] + i * .03, .55);
+      r.name.style.opacity = '1'; r.name.style.background = `rgba(255,255,255,${(.2 + .3 * nb).toFixed(3)})`;
+      P(r.name, 226 + d.nw / 2, cy - 12 * gs, cRow);
+      if (d.user) {
+        const g = eIO(p(t, K.leaf + .05, .8));
+        P(r.kmT, 226 + 95, cy + 16, cRow * gs); r.kmF.style.transform = `scaleX(${(.86 * g).toFixed(4)})`;
+        P(r.leaf, 226 + 190 * .86 * g + 6, cy + 16, cRow * p(t, K.leaf, .1), spr(t, K.leaf, 2.6, .5));
+      } else { P(r.kmT, 0, 0, 0); P(r.leaf, 0, 0, 0); }
+      const grow = d.user ? eIO(p(t, K.rank - .32, .5)) : 0, pw = d.pw + 28 * grow;
+      SZ(r.pts, pw, 18); P(r.pts, 734 + pw / 2, cy, cRow);
+      P(r.coin, 704, cy, cRow, 1 + .3 * bump(t, K.call[0] + i * .03, .5) + (d.user ? .3 * bump(t, K.rank - .3, .5) : 0));
+      const ao = (d.user || i === 1 || i === 2) ? p(t, K.rank + .12, .25) * (1 - p(t, 7.1, .3)) : 0;
+      P(r.arr, 884, cy, cRow * ao, 1, d.user ? 0 : 180);
+      // leader mark for the first three
+      if (inPod) {
+        const ct = K.crown[place], cs2 = spr(t, ct, 2.4, .52);
+        P(r.crown, ax + ad * .34, ay - ad * .44 - (1 - Math.min(1, cs2)) * 30, p(t, ct, .1), cs2 * ad / 88, 20 + (1 - cs2) * 25);
+        const cE = p(t, K.podium + .42, .3);
+        r.gold.style.opacity = (mE * (place === 0 ? 1 : .7)).toFixed(3); r.gold.style.display = mE > .003 ? '' : 'none';
+        P(r.num, w / 2, 262, cE * mE); P(r.dol, w / 2, h - 66, p(t, K.dollar + place * .08, .1) * mE, spr(t, K.dollar + place * .08, 2.4, .55));
+      } else { P(r.crown, 0, 0, 0); P(r.num, 0, 0, 0); P(r.dol, 0, 0, 0); r.gold.style.display = 'none'; }
+    });
+    // hand-written callouts name what the table shows
+    const co = 1 - p(t, 5.02, .22);
+    CALL.forEach((c, k) => { const a = eOut(p(t, K.call[k], .6)); c.n.style.filter = a < .98 ? `blur(${((1 - a) * 10).toFixed(2)}px)` : 'none'; P(c.n, c.x, c.y + (1 - a) * 36 - (1 - co) * 22, a * co); });
+    arOchki(eIO(p(t, K.call[0] + .18, .35)), co); arNick(eIO(p(t, K.call[1] + .18, .35)), co); arFlag(eIO(p(t, K.call[2] + .18, .45)), co);
+  }
+
+  /* ---- F: choose the reward ---- */
+  OPT.forEach((o, k) => {
+    const a = eOut(p(t, K.opts + k * .1, .6)), out = eIn(p(t, 13.36 + (k ? 0 : .06), .34));
+    const pick = eOut(p(t, K.pick, .4));
+    o.sel.style.opacity = k ? '0' : pick.toFixed(3);
+    P(o.chk, 420 - 26, 26, k ? 0 : p(t, K.pick + .06, .1), spr(t, K.pick + .06, 2.6, .5));
+    P(o.n, o.x, 1215 + (1 - a) * 110 + out * 90, a * (1 - out) * (k ? 1 - .5 * pick : 1), k ? 1 - .03 * pick : 1 + .035 * pick);
+  });
+
+  /* ---- G: bonus chips ---- */
+  CHIP.forEach((c, k) => {
+    const s = spr(t, K.chips[k], 2.3, .56), out = p(t, 14.36 + k * .04, .26);
+    P(c, k ? 742 : 326, 1140 + (1 - Math.min(1, s)) * 50 - 30 * eIn(out) + 5 * Math.sin(TAU * (t * .5 + k * .4)), p(t, K.chips[k], .12) * (1 - out), .6 + .4 * s);
+  });
+
+  /* ---- H: Sparks vs OONE ---- */
+  HC.forEach((c, k) => {
+    const a = eOut(p(t, K.cardsH[k], .7)), out = eIn(p(t, 17.76 + k * .04, .36)), cy = (k ? 1290 : 950) + (1 - a) * 90 - out * 40;
+    P(c.n, 540, cy, a * (1 - out), 1 - .05 * out);
+    if (a <= .003) { P(c.plus, 0, 0, 0); return; }
+    const ic = spr(t, K.cardsH[k] + .12, 2.2, .55), hit = bump(t, K.plus[k] + .12, .4);
+    P(c.icon, 150, 150, 1, (.5 + .5 * ic) * (1 + .1 * hit), k ? 0 : (1 - Math.min(1, ic)) * -40);
+    P(c.glow, 150, 150, .6 + .4 * hit);
+    c.ln.forEach((d, i) => lineAnim(d, t, (k ? 15.9 : 15.0), null, i));
+    const ps = spr(t, K.plus[k], 2.4, .55);
+    P(c.plus, 838, cy - 150 + (1 - Math.min(1, ps)) * -40, p(t, K.plus[k], .1) * (1 - out), .5 + .5 * ps, k ? -4 : 4);
+  });
+
+  /* ---- hero avatar thread ---- */
+  {
+    let s = null, o = 0, bg = '#D9D9D9';
+    const podiumAv = { cx: COL[1].x, cy: 1700 - COL[1].H + 104, w: 124, h: 124, rad: 62, ring: 1 };
+    if (t >= 11.85 && t < 15) { s = mixP(podiumAv, POSE.F, eIO(p(t, 11.85, .6))); const out = p(t, 14.38, .3); o = 1 - out; s.cy -= 40 * eIn(out); }
+    else if (t >= K.cluster && t < 29) {
+      const pop = spr(t, K.cluster, 2.2, .6);
+      s = mixP(POSE.T2, POSE.I, eIO(p(t, K.toCard, .6)));
+      s = mixP(s, POSE.J, eIO(p(t, K.toPin, .6)));
+      s = mixP(s, POSE.K, eIO(p(t, 23.4, .6)));
+      s = mixP(s, POSE.L, eIO(p(t, K.toL, .6)));
+      if (t < K.toCard) { const q = .5 + .5 * pop; s.w *= q; s.h *= q; s.rad *= q; }
+      o = p(t, K.cluster, .12) * (1 - p(t, 28.34, .3));
+      const dc = eIO(p(t, K.dot, .4)), inCard = eIO(p(t, K.toCard, .6)) * (1 - eIO(p(t, K.toPin, .6)));
+      bg = mixHex('#D9D9D9', mixHex(DOTC[0], DOTC[3], dc).replace(/rgb\((\d+),(\d+),(\d+)\)/, (m, r, g, b) => '#' + [r, g, b].map(v => (+v).toString(16).padStart(2, '0')).join('')), inCard);
+    }
+    if (!s || o <= .003) { hero.style.display = 'none'; heroRing.style.display = 'none'; }
+    else {
+      SZ(hero, s.w, s.h); hero.style.borderRadius = s.rad.toFixed(1) + 'px'; hero.style.background = bg; P(hero, s.cx, s.cy, o);
+      SZ(heroRing, s.w + 30, s.h + 30); heroRing.style.borderRadius = (s.rad + 15).toFixed(1) + 'px'; P(heroRing, s.cx, s.cy, o * s.ring);
+    }
+    P(heroBadge, POSE.L.cx + 62, POSE.L.cy + 58, p(t, K.badge, .1) * (1 - p(t, 28.34, .3)), spr(t, K.badge, 2.5, .5));
+  }
+
+  /* ---- T2: community cluster ---- */
+  SIDE.forEach((s, k) => {
+    const pop = spr(t, K.cluster + .08 + k * .08, 2.2, .6), out = eIO(p(t, K.toCard - .05, .5));
+    P(s.n, 540 + s.dx * (1 + .5 * out), 1172, p(t, K.cluster + .08 + k * .08, .12) * (1 - out), (.5 + .5 * pop) * (1 - .15 * out));
+  });
+
+  /* ---- I: nickname + avatar picker ---- */
+  {
+    const out = p(t, K.toPin, .25);
+    PEEK.forEach((s, k) => { const a = eOut(p(t, 19.12 + k * .05, .7)); P(s.n, s.x + (k ? 1 : -1) * (1 - a) * 110, 1128, .5 * a * (1 - out), .94 - .06 * out); });
+    const dc = eIO(p(t, K.dot, .4));
+    DOT.forEach((d, k) => { const s = spr(t, 19.36 + k * .04, 2.4, .6); P(d, 540 + (k - 2.5) * 78, 1478, p(t, 19.36 + k * .04, .1) * (1 - out), s); });
+    P(dotRing, 540 + (lerp(0, 3, dc) - 2.5) * 78, 1478, p(t, 19.5, .2) * (1 - out));
+    const a = eOut(p(t, 19.3, .6));
+    P(nick, 540, 772 + (1 - a) * 40, a * (1 - out));
+    const W = [150, 236, 176, 252]; let bw = W[0];
+    K.nick.forEach((tn, k) => { bw = lerp(bw, W[k + 1], eOut(p(t, tn, .2))); });
+    SZ(nickBar, bw, 22);
+    const spin = K.nick.reduce((acc, tn) => acc + eIO(p(t, tn, .24)), 0);
+    nickStar.style.transform = `rotate(${(spin * 90).toFixed(2)}deg) scale(${(1 + .25 * bump(t, K.nick[2] + .12, .4)).toFixed(3)})`;
+  }
+
+  /* ---- J/K: the map ---- */
+  {
+    const a = eSoft(p(t, K.toPin, .8)), dim = eIO(p(t, 23.36, .5)), out = p(t, K.toL, .4);
+    const mo = a * lerp(.95, .3, dim) * (1 - out), ms = lerp(1.1, 1.0, eSoft(p(t, K.toPin, 4.2)));
+    if (mo <= .003) mapN.style.display = 'none';
+    else { mapN.style.display = ''; mapN.style.opacity = mo.toFixed(3); mapN.style.transform = `translate(0px,522px) scale(${ms.toFixed(4)})`; }
+    const lg = eIO(p(t, K.league, .5));
+    CL.forEach((c, k) => {
+      const tp = K.pins + k * K.pinGap, s = spr(t, tp, 2.3, .58);
+      P(c.node, c.x, c.y + 4 * Math.sin(TAU * (t * .4 + k * .21)), p(t, tp, .12) * (c.league ? 1 : 1 - .82 * lg) * (1 - p(t, 23.36, .3)), (.5 + .5 * s) * (c.league ? 1 + .06 * bump(t, K.league + .1, .5) : 1 - .1 * lg));
+    });
+    LLINE.forEach((l, k) => { const q = eIO(p(t, K.league + .05 + k * .06, .5)), o = .55 * (1 - p(t, 23.3, .25)); l.style.display = q > .001 && o > .003 ? '' : 'none'; l.style.opacity = o.toFixed(3); l.style.strokeDasharray = `${(q * .82).toFixed(4)} 2`; l.style.strokeDashoffset = '-0.13'; });
+    PULSE.forEach((n, k) => { const t0 = [22.0, K.league + .05][k], q = p(t, t0, .9); P(n, 540, 1210, q > 0 && q < 1 ? .7 * (1 - q) : 0, .66 + 1.5 * eOut(q)); });
+  }
+
+  /* ---- K: settings sheet ---- */
+  {
+    const a = eOut(p(t, K.sheet, .75)), out = eIn(p(t, K.toL - .04, .4));
+    P(sheet, 540, 1330 + (1 - a) * 760 + out * 820, a > 0 ? 1 - p(out, .8, .2) : 0);
+    const sel = eIO(p(t, K.select, .42)), sy = lerp(SOPT[0].y, SOPT[1].y, sel);
+    P(selBg, 24 + 436, sy, 1); P(radio, 62 + 28, sy, 1, 1 + .16 * bump(t, K.select + .26, .32));
+    P(chatBtn, 664, 716, p(t, 23.86, .1) * (1 - p(t, K.toL, .22)), spr(t, 23.86, 2.4, .55));
+  }
+
+  /* ---- L: invite a friend, both get tanks ---- */
+  {
+    const out = p(t, 28.34, .3), oo = 1 - out;
+    P(friend, 790, 884, p(t, K.friend, .12) * oo, spr(t, K.friend, 2.2, .58));
+    arInvite(eIO(p(t, K.arrow1, .5)), oo); arBack(eIO(p(t, K.arrow2, .45)), oo);
+    TANK.forEach((n, i) => { const tp = K.tanks + i * K.tankGap, s = spr(t, tp, 2.4, .55); n.querySelector('.arc').style.strokeDashoffset = (1 - eIO(p(t, tp + .05, .6))).toFixed(4); P(n, 196 + i * 172, 1196 + (1 - Math.min(1, s)) * 40, p(t, tp, .1) * oo, .5 + .5 * s); });
+    const km = eIO(p(t, K.km, .6)), ra = eOut(p(t, K.km - .12, .5));
+    P(road, 540, 1326, ra * oo); roadF.style.transform = `scaleX(${km.toFixed(4)})`;
+    document.getElementById('kmN').textContent = String(Math.round(50 * km));
+    P(kmLab, 540, 1400 + (1 - ra) * 30, ra * oo);
+    P(days, 540, 1530, p(t, K.days, .1) * oo, spr(t, K.days, 2.4, .56));
+  }
+
+  /* ---- M: notifications ---- */
+  {
+    const out = eIO(p(t, K.end, .36));
+    BAN.forEach((n, i) => {
+      const t0 = K.ban + i * K.banGap, a = eOut(p(t, t0, .55));
+      let slot = 0; for (let j = i + 1; j < BAN.length; j++) slot += eOut(p(t, K.ban + j * K.banGap, .55));
+      P(n, 540, 740 - (1 - a) * 170 + slot * 156 - 24 * out, a * (1 - out), (1 - .035 * Math.min(slot, 3)) * (.92 + .08 * a) * (1 - .05 * out));
+    });
+  }
+
+  /* ---- type: one move for every line of copy ---- */
+  for (const tx of TEXTS) {
+    if (t < tx.t0 - .02 || t > tx.t1 + .02) { tx.box.style.display = 'none'; continue; }
+    tx.box.style.display = '';
+    tx.ln.forEach((d, i) => lineAnim(d, t, tx.t0, tx.t1, i));
+    tx.ul.forEach(u => { u.style.strokeDashoffset = (1 - eIO(p(t, tx.t0 + .32, .5))).toFixed(4); });
+  }
+}
+window.renderAt = renderAt; window.seek = renderAt;
+window.ready = (async () => {
+  await document.fonts.load('600 78px Inter', 'Жя'); await document.fonts.load('700 48px Caveat', 'Жя'); await document.fonts.load('58px "Caveat Brush"', '12'); await document.fonts.ready;
+  const urls = new Set();
+  stage.querySelectorAll('*').forEach(n => { const m = /url\("?([^")]+)"?\)/.exec(n.style.backgroundImage || ''); if (m) urls.add(m[1]); });
+  await Promise.all([...urls].map(u => { const i = new Image(); i.src = u; return i.decode().catch(() => { throw new Error('asset failed: ' + u); }); }));
+  layout(); renderAt(+new URLSearchParams(location.search).get('t') || 0);
+  return true;
+})();
+</script>
+</body>
+</html>
